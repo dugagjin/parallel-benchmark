@@ -41,6 +41,6 @@ auto calculateTime = [](auto function, auto array){
 int main (){
     auto* array = initializeArray();
     calculateTime(sequentialSum, array);
-    calculateTime(openMpSum, array);
+    //calculateTime(openMpSum, array);
     return 0;
 }

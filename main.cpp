@@ -6,9 +6,10 @@
 #define maxRandomValue 1000
 
 using namespace std;
+using namespace std::chrono;
 
 auto initializeArray = [](){
-    srand(time(NULL));
+    //srand(time(NULL));
     auto* array = new int [arrayLength];
     for (auto i = 0; i < arrayLength; i++){
         array[i] = rand() % maxRandomValue + 1;
@@ -21,26 +22,18 @@ auto sequentialSum = [](auto array){
     for (auto i = 0; i < arrayLength; i++){
         sum += array[i];
     }
+    return sum;
 };
 
-/*auto openMpSum = [](auto array){
-    auto sum = 0;
-    #pragma omp parallel for
-    for (auto i = 0; i < arrayLength; i++){
-        sum += array[i];
-    }
-};*/
-
 auto calculateTime = [](auto function, auto array){
-    chrono::steady_clock::time_point begin = chrono::steady_clock::now();
-    function(array);
-    chrono::steady_clock::time_point end = chrono::steady_clock::now();
-    cout << "time required is " << chrono::duration_cast<chrono::microseconds>(end - begin).count() << " µs" << endl;
+    steady_clock::time_point begin = steady_clock::now();
+    auto sum = function(array);
+    steady_clock::time_point end = steady_clock::now();
+    cout << "required time: " << chrono::duration_cast<chrono::microseconds>(end - begin).count() << " µs\nsum: " <<  sum <<endl;
 };
 
 int main (){
     auto* array = initializeArray();
     calculateTime(sequentialSum, array);
-    //calculateTime(openMpSum, array);
     return 0;
 }

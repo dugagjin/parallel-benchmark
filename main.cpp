@@ -11,21 +11,44 @@
 #pragma comment(lib, "user32.lib")
 
 #ifdef _WIN32
-	#define WINPAUSE system("pause")
+#define WINPAUSE system("pause")
 #endif
 
-#define arrayLength 10000000
+#define arrayLength 65536
 #define maxRandomValue 10
+#define nameVariable(a) #a
 
 using namespace std;
 using namespace chrono;
 
-auto initializeArray = []() {
+
+auto getSystemInfo() -> void {
+	try {
+		LARGE_INTEGER lpFrequency;
+		QueryPerformanceFrequency(&lpFrequency);
+		SYSTEM_INFO siSysInfo;
+		GetSystemInfo(&siSysInfo);
+		auto CPUSpeed = float(lpFrequency.QuadPart) / 1000000;
+		cout << siSysInfo.dwNumberOfProcessors << " cores at about " << CPUSpeed << " Ghz" << endl << endl;
+	} catch (int e) {
+		cout << "Could not get systeminfo. Exception #" << e << '\n';
+	}
+};
+
+auto initializeArray() -> auto* {
 	auto* array = new int[arrayLength];
 	for (auto i = 0; i < arrayLength; i++) {
 		array[i] = rand() % maxRandomValue + 1;
 	}
 	return array;
+};
+
+auto calculateTime = [](auto name, auto function, auto &array) {
+	auto begin = steady_clock::now();
+	auto sum = function(array);
+	auto end = steady_clock::now();
+	cout << name << " function done in " << duration_cast<microseconds>(end - begin).count() << " ns.";
+	cout << " The sum is: " << sum << endl;
 };
 
 auto sequentialSum = [](auto &array) {
@@ -38,18 +61,18 @@ auto sequentialSum = [](auto &array) {
 
 auto autoParallelSum = [](auto &array) {
 	auto sum = 0;
-	#pragma loop(ivdep)
-	#pragma loop(hint_parallel(4))
+#pragma loop(ivdep)
+#pragma loop(hint_parallel(4))
 	for (auto i = 0; i < arrayLength; i++) {
 		sum += array[i];
 	}
 	return sum;
 };
 
-auto autoVectorSum = [](auto &array) {
+auto noVectorSum = [](auto &array) {
 	auto sum = 0;
-	#pragma loop(ivdep)
-	#pragma loop(no_vector)
+#pragma loop(ivdep)
+#pragma loop(no_vector)
 	for (auto i = 0; i < arrayLength; i++) {
 		sum += array[i];
 	}
@@ -58,7 +81,7 @@ auto autoVectorSum = [](auto &array) {
 
 auto openMPSum = [](auto &array) {
 	auto sum = 0;
-	#pragma omp parallel for reduction(+:sum)
+#pragma omp parallel for reduction(+:sum)
 	for (auto i = 0; i < arrayLength; i++) {
 		sum += array[i];
 	}
@@ -73,68 +96,44 @@ auto SIMDSum = [](auto &array) {
 	assert((n & 3) == 0);
 	assert(((uintptr_t)(array) & 15) == 0);
 	for (auto i = 0; i < n; i += 4){
-		__m128 v = _mm_load_ps(&array[i]);
-		vsum = _mm_add_ps(vsum, v);
+	__m128 v = _mm_load_ps(&array[i]);
+	vsum = _mm_add_ps(vsum, v);
 	}
 	vsum = _mm_hadd_ps(vsum, vsum);
 	vsum = _mm_hadd_ps(vsum, vsum);
 	_mm_store_ss(&sum, vsum);
 	*/
-
 	return static_cast<int>(sum);
-	
 };
 
 auto multiThreadedSum = [](auto &array) {
-	auto sum_left = 0;
-	auto sum_right = 0;
-
-	auto threadSum = [](auto &arrayThread, auto min, auto max, auto &sumThread) {
-		for (min; min < max; min++) {
-			sumThread += arrayThread[min];
+	const auto numberOfThreads = 2;
+	const auto elementsPerThread = arrayLength / numberOfThreads;
+	auto sum = 0;
+	auto threadSum = [&sum](auto* arrayThread, auto max) -> void {
+		for (auto i = 0; i < max; i++) {
+			sum += arrayThread[i];
 		}
 	};
-	/*
-	thread t1(sequentialSum, array, 0, arrayLength / 2, ref(sum_left));
-	thread t2(sequentialSum, array, arrayLength / 2, arrayLength, ref(sum_right));
-
-	t1.join();
-	t2.join();
-	*/
-	auto sum = sum_left + sum_right;
-	return sum;
-};
-
-
-auto calculateTime = [](auto function, auto &array) {
-	auto begin = steady_clock::now();
-	auto sum = function(array);
-	auto end = steady_clock::now();
-	cout << "required time: " << duration_cast<microseconds>(end - begin).count() << " us "; 
-	cout << " | sum: " << sum << endl;
-};
-
-auto getSystemInfo = [](){
-	try {
-		LARGE_INTEGER lpFrequency;
-		QueryPerformanceFrequency(&lpFrequency);
-		auto CPUSpeed = float(lpFrequency.QuadPart) / 1000000;
-		SYSTEM_INFO siSysInfo;
-		GetSystemInfo(&siSysInfo);
-		cout << siSysInfo.dwNumberOfProcessors << " cores at " << CPUSpeed << " Ghz" << endl << endl;
-	} catch (int e){
-		cout << "Could not get systeminfo. Exception #" << e << '\n';
+	vector<thread*> threads;
+	for (auto i = 0; i < numberOfThreads; i++) {
+		threads.push_back(new thread(threadSum, array + i * elementsPerThread, elementsPerThread));
 	}
+	for (auto t : threads) {
+		t->join();
+		delete t;
+	}
+	return sum;
 };
 
 int main() {
 	getSystemInfo();
 	auto* array = initializeArray();
-	calculateTime(sequentialSum, array);
-	calculateTime(autoParallelSum, array);
-	calculateTime(autoVectorSum, array);
-	calculateTime(openMPSum, array);
-	calculateTime(SIMDSum, array);
+	calculateTime(nameVariable(sequentialSum), sequentialSum, array);
+	calculateTime(nameVariable(autoParallelSum), autoParallelSum, array);
+	calculateTime(nameVariable(autoVectorSum), noVectorSum, array);
+	calculateTime(nameVariable(openMPSum), openMPSum, array);
+	calculateTime(nameVariable(multiThreadedSum), multiThreadedSum, array);
 	WINPAUSE;
 	return 0;
 }

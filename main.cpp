@@ -125,7 +125,7 @@ public:
 
 int main() {
 	printSystemInfo();	
-	auto* arrayOfRandomNumbers = initializeRandomArray(262'144, 1);
+	auto arrayOfRandomNumbers = initializeRandomArray(262'144, 1);
 	for(auto &f : Methods::Sum()) {
 		calculateTime(f.first, f.second, arrayOfRandomNumbers);
 	}

@@ -8,14 +8,15 @@ This project try to parallelize the reduction of an array with different approac
 - Auto-parallelize
 - No vector
 - OpenMP
-- Threads (but buggy when array to large ?)
+- Threads (with futures)
 
 ## What has to be implemented
 
 - OpenCL
-- SIMD
+- CUDA
+- SIMD (written but has a bug)
 
-## Actual issues
+## Remarks
 
 - Auto-parallelize from Microsoft does not work - error 1007: reduction of array to scalar - so it's normal.
 

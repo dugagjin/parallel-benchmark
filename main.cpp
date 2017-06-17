@@ -3,89 +3,169 @@
 #include <string>
 #include <future>
 #include <vector>
+#include <map>
 
 #include <stdlib.h>
 #include <windows.h>
-#include <map>
-#pragma comment(lib, "user32.lib")
 
+#pragma comment(lib, "user32.lib")
 #define WINPAUSE system("pause")
+
 
 using namespace std;
 using namespace chrono;
 
-auto sum = []() {
-	map<string, function<int(int* &, int)>> methods; 		
-	methods["classic"] = [](auto &array, auto arrayLength) {
-		auto sum = 0;
+
+
+auto add = [](auto name) {
+	map<string, function<unique_ptr<float[]>(float* &, float* &, int)>> methods;
+	methods["classic"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
 		for (auto i = 0; i < arrayLength; i++) {
-			sum += array[i];
+			arrayOut[i] = array1[i] + array2[i];
 		}
-		return sum;
+		return arrayOut;
 	};
-	methods["autoparallel"] = [](auto &array, auto arrayLength) {
-		auto sum = 0;
+	methods["autoparallel"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
 		#pragma loop(ivdep)
 		#pragma loop(hint_parallel(4))
 		for (auto i = 0; i < arrayLength; i++) {
-			sum += array[i];
+			arrayOut[i] = array1[i] + array2[i];
 		}
-		return sum;
+		return arrayOut;
 	};
-	methods ["novector"] = [](auto &array, auto arrayLength) {
-		auto sum = 0;
+	methods["autovector"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
 		#pragma loop(ivdep)
 		#pragma loop(no_vector)
 		for (auto i = 0; i < arrayLength; i++) {
-			sum += array[i];
+			arrayOut[i] = array1[i] + array2[i];
 		}
-		return sum;
+		return arrayOut;
 	};
-	methods["openmp"] = [](auto &array, auto arrayLength) {
-		auto sum = 0;
-		#pragma omp parallel for reduction(+:sum)
+	methods["openmp"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		#pragma omp parallel for 
 		for (auto i = 0; i < arrayLength; i++) {
-			sum += array[i];
+			arrayOut[i] = array1[i] + array2[i];
 		}
-		return sum;
+		return arrayOut;
 	};
-	methods["simd"] = [](auto array, auto arrayLength) {
-		/* array needs to be 16 byte aligned, Thats why it does not work */
-		/* and have no idea what this means */
-		const auto vk0 = _mm_set1_epi8(0);
-		const auto vk1 = _mm_set1_epi16(1);
-		auto vsum = _mm_set1_epi32(0);
-		auto n = arrayLength / 16;
-		for (auto i = 0; i < n; i += 16) {
-			__m128i v = _mm_loadu_si128(reinterpret_cast<__m128i*>(&array[i]));
-			auto vl = _mm_unpacklo_epi8(v, vk0);
-			auto vh = _mm_unpackhi_epi8(v, vk0);
-			vsum = _mm_add_epi32(vsum, _mm_madd_epi16(vl, vk1));
-			vsum = _mm_add_epi32(vsum, _mm_madd_epi16(vh, vk1));
+	methods["simd"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		const int aligned = arrayLength - arrayLength % 4;
+		for (auto i = 0; i < aligned; i += 4) {
+			_mm_storeu_ps(&arrayOut[i], _mm_add_ps(_mm_loadu_ps(&array1[i]), _mm_loadu_ps(&array2[i])));
 		}
-		vsum = _mm_add_epi32(vsum, _mm_srli_si128(vsum, 8));
-		vsum = _mm_add_epi32(vsum, _mm_srli_si128(vsum, 4));
-		return  _mm_cvtsi128_si32(vsum);
+		for (auto i = aligned; i < arrayLength; ++i) {
+			arrayOut[i] = array1[i] + array2[i];
+		}
+		return arrayOut;
 	};
-	methods["threads"] = [](auto &array, auto arrayLength) {
-		auto sum = 0, numberOfThreads = 8, elementsPerThread = (arrayLength / numberOfThreads);
-		auto accumulator = [](auto* array, auto max) {
-			auto sum = 0;
+	methods["threads"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto numberOfThreads = 4, elementsPerThread = (arrayLength / numberOfThreads);
+		auto add = [](auto* array1, auto* array2, auto* array3, auto max) {
 			for (auto i = 0; i < max; i++) {
-				sum += array[i];
+				array3[i] = array1[i] + array2[i];
 			}
-			return sum;
 		};
-		vector<future<int>> threads;
+		vector<thread*> threads;
 		for (auto i = 0; i < numberOfThreads; i++) {
-			threads.push_back(async(launch::async, accumulator, array + i * elementsPerThread, elementsPerThread));
-			sum += threads.at(i).get();
+			threads.push_back(
+				new thread(
+					add,
+					array1 + i * elementsPerThread,
+					array2 + i * elementsPerThread,
+					arrayOut.get() + i * elementsPerThread,
+					elementsPerThread
+				)
+			);
 		}
-		return sum;
+		for (auto thread : threads) {
+			thread->join();
+			delete thread;
+		}
+		return arrayOut;
 	};
-	return methods;
+	return methods[name];
 };
 
+auto mul = [](auto name) {
+	map<string, function<unique_ptr<float[]>(float* &, float* &, int)>> methods;
+	methods["classic"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		for (auto i = 0; i < arrayLength; i++) {
+			arrayOut[i] = array1[i] * array2[i];
+		}
+		return arrayOut;
+	};
+	methods["autoparallel"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		#pragma loop(ivdep)
+		#pragma loop(hint_parallel(4))
+		for (auto i = 0; i < arrayLength; i++) {
+			arrayOut[i] = array1[i] * array2[i];
+		}
+		return arrayOut;
+	};
+	methods["autovector"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		#pragma loop(ivdep)
+		#pragma loop(no_vector)
+		for (auto i = 0; i < arrayLength; i++) {
+			arrayOut[i] = array1[i] * array2[i];
+		}
+		return arrayOut;
+	};
+	methods["openmp"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		#pragma omp parallel for 
+		for (auto i = 0; i < arrayLength; i++) {
+			arrayOut[i] = array1[i] * array2[i];
+		}
+		return arrayOut;
+	};
+	methods["simd"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		const int aligned = arrayLength - arrayLength % 4;
+		for (auto i = 0; i < aligned; i += 4) {
+			_mm_storeu_ps(&arrayOut[i], _mm_mul_ps(_mm_loadu_ps(&array1[i]), _mm_loadu_ps(&array2[i])));
+		}
+		for (auto i = aligned; i < arrayLength; ++i) {
+			arrayOut[i] = array1[i] * array2[i];
+		}
+		return arrayOut;
+	};
+	methods["threads"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto numberOfThreads = 4, elementsPerThread = (arrayLength / numberOfThreads);
+		auto add = [](auto* array1, auto* array2, auto* array3, auto max) {
+			for (auto i = 0; i < max; i++) {
+				array3[i] = array1[i] * array2[i];
+			}
+		};
+		vector<thread*> threads;
+		for (auto i = 0; i < numberOfThreads; i++) {
+			threads.push_back(
+				new thread(
+					add,
+					array1 + i * elementsPerThread,
+					array2 + i * elementsPerThread,
+					arrayOut.get() + i * elementsPerThread,
+					elementsPerThread
+				)
+			);
+		}
+		for (auto thread : threads) {
+			thread->join();
+			delete thread;
+		}
+		return arrayOut;
+	};
+	return methods[name];
+};
 
 auto printSystemInfo = [] {
 	try {
@@ -100,31 +180,56 @@ auto printSystemInfo = [] {
 };
 
 auto initializeRandomArray = [](auto arrayLength, auto maxRandomValue) {
-	auto array = new int[arrayLength];
+	auto array = new float[arrayLength];
 	for (auto i = 0; i < arrayLength; i++) {
 		array[i] = rand() % maxRandomValue + 1;
 	}
 	return array;
 };
 
-auto calculateTime = [](auto name = "", auto &sumFunction, auto &array, auto arrayLength) {
+auto calculateTime = [](auto name, auto &sumFunction, auto &array1, auto &array2, auto arrayLength, bool debug = false) {
 	auto begin = steady_clock::now();
-	auto sum = sumFunction(array, arrayLength);
+	auto output = sumFunction(array1, array2, arrayLength);
 	auto end = steady_clock::now();
-	cout << name << " function done in " << duration_cast<microseconds>(end - begin).count() << " ns.";
-	cout << " The sum is: " << sum << endl;
+	if (debug) {
+		cout << name << " function done in " << duration_cast<microseconds>(end - begin).count() << " ns. " << endl;
+		cout << array1[0] << " + " << array2[0] << " = " << output[0] << endl;
+	}
+	return duration_cast<microseconds>(end - begin).count();
 };
 
 
 
 int main() {
-	auto arrayLength = 268'435'456, randomValueMax = 268'435'456;
-	auto arrayOfRandomNumbers = initializeRandomArray(arrayLength, randomValueMax);
+	auto arrayLength = 1'048'576, randomValueMax = 1'024;
+	cout << "Generating array ... ";
+	auto arrayA = initializeRandomArray(arrayLength, randomValueMax);
+	auto arrayB = initializeRandomArray(arrayLength, randomValueMax);
+	cout << " done ! " << endl;
 	printSystemInfo();	
-	auto methods = sum();
-	for(auto &method : methods) {
-		calculateTime(method.first, method.second, arrayOfRandomNumbers, arrayLength);
-	}
+	vector<string> methods = { "classic", "autoparallel", "autovector", "openmp", "simd", "threads" };
+
+	for_each(methods.begin(), methods.end(), [&arrayA, &arrayB, &arrayLength](auto method) {
+		vector<long long> measurements;
+		for (auto i = 0; i < 200; i++) {
+			measurements.push_back(calculateTime(method, mul(method), arrayA, arrayB, arrayLength));
+		}
+		sort(measurements.begin(), measurements.end());
+		auto median = measurements[measurements.size() / 2];
+		long long total = 0;
+		for (auto& measurement : measurements) {
+			total += measurement;
+		}
+		auto average = total / measurements.size();
+
+		auto standardDeviation = 0;
+		for (auto &measurement : measurements){
+			standardDeviation += pow(measurement - average, 2);
+		}
+		standardDeviation = sqrt(standardDeviation / measurements.size());
+		cout << method << ":\naverage: " << average << "\t median: " << median << "\t min: " << measurements.at(0) << "\t max: " << measurements.at(measurements.size() - 1) << "\t standard deviation: " << standardDeviation << endl;
+	});
+
 	WINPAUSE;
 	return 0;
 }

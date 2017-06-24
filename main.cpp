@@ -20,7 +20,7 @@ using json = nlohmann::json;
 using namespace std;
 using namespace chrono;
 
-auto add = [](auto name) {
+auto vectoradd = [](auto name) {
 	map<string, function<unique_ptr<float[]>(float* &, float* &, int)>> methods;
 	methods["classic"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
@@ -57,7 +57,7 @@ auto add = [](auto name) {
 	};
 	methods["simd"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		const int aligned = arrayLength - arrayLength % 4;
+		const auto aligned = arrayLength - arrayLength % 4;
 		#pragma loop(no_vector)	
 		for (auto i = 0; i < aligned; i += 4) {
 			_mm_storeu_ps(&arrayOut[i], _mm_add_ps(_mm_loadu_ps(&array1[i]), _mm_loadu_ps(&array2[i])));
@@ -140,6 +140,157 @@ auto add = [](auto name) {
 	return methods[name];
 };
 
+
+auto matrixMultiplication = [](auto name) {
+	map<string, function<unique_ptr<float[]>(float* &, float* &, int)>> methods;
+	methods["classic"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto width = (int)sqrt(arrayLength);
+		#pragma loop(no_vector)	
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
+				}
+			}
+		}
+		return arrayOut;
+	};
+	methods["autoparallel"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto width = (int)sqrt(arrayLength);
+		#pragma loop(ivdep)
+		#pragma loop(hint_parallel(4))
+		#pragma loop(no_vector)	
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
+				}
+			}
+		}
+		return arrayOut;
+	};
+	methods["autovector"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto width = (int)sqrt(arrayLength);
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
+				}
+			}
+		}
+		return arrayOut;
+	};
+	methods["openmp"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto width = (int)sqrt(arrayLength);
+		#pragma omp parallel for
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
+				}
+			}
+		}
+		return arrayOut;
+	};/*
+	methods["simd"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		const auto aligned = arrayLength - arrayLength % 4;
+		#pragma loop(no_vector)	
+		for (auto i = 0; i < aligned; i += 4) {
+			_mm_storeu_ps(&arrayOut[i], _mm_add_ps(_mm_loadu_ps(&array1[i]), _mm_loadu_ps(&array2[i])));
+		}
+		for (auto i = aligned; i < arrayLength; ++i) {
+			arrayOut[i] = array1[i] + array2[i];
+		}
+		return arrayOut;
+	};
+	methods["threads"] = [](auto &array1, auto &array2, auto arrayLength) {
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		auto numberOfThreads = 4, elementsPerThread = (arrayLength / numberOfThreads);
+		auto add = [](auto* array1, auto* array2, auto* array3, auto max) {
+		#pragma loop(no_vector)	
+			for (auto i = 0; i < max; i++) {
+				array3[i] = array1[i] + array2[i];
+			}
+		};
+		vector<thread*> threads;
+		for (auto i = 0; i < numberOfThreads; i++) {
+			threads.push_back(
+				new thread(
+					add,
+					array1 + i * elementsPerThread,
+					array2 + i * elementsPerThread,
+					arrayOut.get() + i * elementsPerThread,
+					elementsPerThread
+				)
+			);
+		}
+		for (auto thread : threads) {
+			thread->join();
+			delete thread;
+		}
+		return arrayOut;
+	};*/
+	methods["openCL"] = [](auto &array1, auto &array2, auto arrayLength) {
+		vector<cl::Platform> all_platforms;
+		cl::Platform::get(&all_platforms);
+		cl::Platform default_platform = all_platforms[0];
+
+		vector<cl::Device> all_devices;
+		default_platform.getDevices(CL_DEVICE_TYPE_ALL, &all_devices);
+		cl::Device default_device = all_devices[0];
+		cl::Context context({ default_device });
+		cl::Program::Sources sources;
+
+		string kernel_code =
+			"   __kernel void simple_add(__global const float* A, __global const float* B, __global float* C, const int M){		"
+			"		const int column  = get_global_id(0);													"
+			"		const int row  = get_global_id(1);														"
+			"		for (int k = 0; k < M; k++) {															"
+			"			C[row * M + column] += A[row * M + k] * B[k * M + column];							"
+			"		}																						"
+			"	}																							";
+		sources.push_back({ kernel_code.c_str(), kernel_code.length() });
+
+		cl::Program program(context, sources);
+		if (program.build({ default_device }) != CL_SUCCESS) {
+			cout << " Error building: " << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(default_device) << "\n";
+			cin.get();
+		}
+
+		cl::Buffer buffer_A(context, CL_MEM_READ_WRITE, sizeof(float) * arrayLength);
+		cl::Buffer buffer_B(context, CL_MEM_READ_WRITE, sizeof(float) * arrayLength);
+		cl::Buffer buffer_C(context, CL_MEM_READ_WRITE, sizeof(float) * arrayLength);
+
+		cl::CommandQueue queue(context, default_device);
+
+		int width = sqrt(arrayLength);
+		queue.enqueueWriteBuffer(buffer_A, CL_TRUE, 0, sizeof(float) * arrayLength, array1);
+		queue.enqueueWriteBuffer(buffer_B, CL_TRUE, 0, sizeof(float) * arrayLength, array2);
+
+		cl::Kernel kernel_add = cl::Kernel(program, "simple_add");
+		kernel_add.setArg(0, buffer_A);
+		kernel_add.setArg(1, buffer_B);
+		kernel_add.setArg(2, buffer_C);
+		kernel_add.setArg(3, width);
+		queue.enqueueNDRangeKernel(kernel_add, cl::NullRange, cl::NDRange(arrayLength), cl::NullRange);
+		queue.finish();
+
+		unique_ptr<float[]> arrayOut(new float[arrayLength]);
+		queue.enqueueReadBuffer(buffer_C, CL_TRUE, 0, sizeof(float) * arrayLength, arrayOut.get());
+		return arrayOut;
+	};
+	return methods[name];
+};
+
 auto detectGPU = [] () {
 	vector<cl::Platform> all_platforms;
 	cl::Platform::get(&all_platforms);
@@ -163,7 +314,6 @@ auto detectCPU = [] (auto print) {
 	try {
 		QueryPerformanceFrequency(&lpFrequency);
 		GetSystemInfo(&siSysInfo);
-		
 	} catch (exception const& e) {
 		cout << "Error: " << e.what() << '\n';
 	}
@@ -181,13 +331,12 @@ auto initializeRandomArray = [](auto arrayLength, auto maxRandomValue) {
 	return array;
 };
 
-auto calculateTime = [](auto name, auto &sumFunction, auto &array1, auto &array2, auto arrayLength, bool debug = false) {
+auto calculateTime = [](auto name, auto &sumFunction, auto &input1, auto &input2, auto arrayLength, bool debug = false) {
 	auto begin = steady_clock::now();
-	auto output = sumFunction(array1, array2, arrayLength);
+	auto output = sumFunction(input1, input2, arrayLength);
 	auto end = steady_clock::now();
 	if (debug) {
-		cout << name << " function done in " << duration_cast<nanoseconds>(end - begin).count() << " ns. " << endl;
-		cout << array1[0] << " + " << array2[0] << " = " << output[0] << endl;
+		cout << input1[0] << " + " << input2[0] << " = " << output[0] << endl;
 	}
 	return duration_cast<nanoseconds>(end - begin).count();
 };
@@ -195,23 +344,23 @@ auto calculateTime = [](auto name, auto &sumFunction, auto &array1, auto &array2
 int main() {
 	detectGPU();
 	detectCPU(true);
-	vector<int> lengths = { 4, 16, 128, 1'024, 16'384, 131'072, 1'048'576, 16'777'216, 134'217'728 };
+	vector<int> lengths = { 16, 256, 1'024, 16'384, 262'144, 1'048'576, 4'194'304/*, 16'777'216, 268'435'456*/ };
 	std::cout << "Will run " << lengths.size() << " times for a total of +/- 10 minutes. Do not exit." << endl;
 	json jsontiny, jsonbig;
 
 	for (auto l = 0; l < lengths.size(); l++) {
-		auto arrayLength = lengths[l], randomValueMax = 1'000;
+		auto arrayLength = lengths[l], randomValueMax = 10;
 		std::cout << "Preparing for " << arrayLength << " elements ...";
 		auto arrayA = initializeRandomArray(arrayLength, randomValueMax);
 		std::cout << " half way ... ";
 		auto arrayB = initializeRandomArray(arrayLength, randomValueMax);
 		std::cout << " done, computation starts now ! " << endl;
 
-		vector<string> methods = { "classic", "autoparallel", "autovector", "openmp", "simd", "threads", "openCL" };
+		vector<string> methods = { "classic", "autoparallel", "autovector", "openmp",/* "simd", "threads",*/ "openCL" };
 		for_each(methods.begin(), methods.end(), [&arrayA, &arrayB, &arrayLength, &jsontiny](auto method) {
 			vector<long long> measurements;
-			for (auto i = 0; i < 100; i++) {
-				measurements.push_back(calculateTime(method, add(method), arrayA, arrayB, arrayLength));
+			for (auto i = 0; i < 1; i++) {
+				measurements.push_back(calculateTime(method, matrixMultiplication(method), arrayA, arrayB, arrayLength, true));
 			}
 			sort(measurements.begin(), measurements.end());
 			auto median = measurements[measurements.size() / 2];
@@ -220,7 +369,7 @@ int main() {
 			auto Gbandwith = sizeof(float) * 3 * arrayLength / average;
 			auto ticks = average * detectCPU(false) * 1'000;
 			cout << "> ";
-			cout << method << ": " << GoperationsPerSecond << " GO/s" << endl;
+			cout << median << " ns -> " << method << endl;
 			jsontiny[method] = { 
 				{ "average", average }, 
 				{ "median", median}, 
@@ -237,12 +386,11 @@ int main() {
 		delete[] arrayA;
 		delete[] arrayB;
 	}
-
-	std::ofstream o("logsfordugagjin.json");
+	std::ofstream o("test.json");
 	o << std::setw(4) << jsonbig << std::endl;
 	std::cout << "Program ended and data saved. You can safely exit the program by pressing enter." << endl;
 
-	cin.get();
+	std::cin.get();
 	return 0;
 }
 

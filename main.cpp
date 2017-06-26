@@ -1,7 +1,7 @@
 #include <iostream>
 #include <chrono>
 #include <string>
-#include <thread>
+#include <future>
 #include <vector>
 #include <map>
 #include <numeric>
@@ -24,7 +24,7 @@ auto vectorAdd = [](auto name) {
 	map<string, function<unique_ptr<float[]>(float* &, float* &, int)>> methods;
 	methods["classic"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		#pragma loop(no_vector)	
+#pragma loop(no_vector)	
 		for (auto i = 0; i < arrayLength; i++) {
 			arrayOut[i] = array1[i] + array2[i];
 		}
@@ -32,9 +32,9 @@ auto vectorAdd = [](auto name) {
 	};
 	methods["autoparallel"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		#pragma loop(ivdep)
-		#pragma loop(hint_parallel(4))
-		#pragma loop(no_vector)	
+#pragma loop(ivdep)
+#pragma loop(hint_parallel(4))
+#pragma loop(no_vector)	
 		for (auto i = 0; i < arrayLength; i++) {
 			arrayOut[i] = array1[i] + array2[i];
 		}
@@ -49,7 +49,7 @@ auto vectorAdd = [](auto name) {
 	};
 	methods["openmp"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		#pragma omp parallel for
+#pragma omp parallel for
 		for (auto i = 0; i < arrayLength; i++) {
 			arrayOut[i] = array1[i] + array2[i];
 		}
@@ -58,7 +58,7 @@ auto vectorAdd = [](auto name) {
 	methods["simd"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
 		const auto aligned = arrayLength - arrayLength % 4;
-		#pragma loop(no_vector)	
+#pragma loop(no_vector)	
 		for (auto i = 0; i < aligned; i += 4) {
 			_mm_storeu_ps(&arrayOut[i], _mm_add_ps(_mm_loadu_ps(&array1[i]), _mm_loadu_ps(&array2[i])));
 		}
@@ -71,15 +71,15 @@ auto vectorAdd = [](auto name) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
 		auto numberOfThreads = 4, elementsPerThread = (arrayLength / numberOfThreads);
 		auto add = [](auto* array1, auto* array2, auto* array3, auto max) {
-			#pragma loop(no_vector)	
+#pragma loop(no_vector)	
 			for (auto i = 0; i < max; i++) {
 				array3[i] = array1[i] + array2[i];
 			}
 		};
-		vector<thread> threads;
+		vector<thread*> threads;
 		for (auto i = 0; i < numberOfThreads; i++) {
 			threads.push_back(
-				thread(
+				new thread(
 					add,
 					array1 + i * elementsPerThread,
 					array2 + i * elementsPerThread,
@@ -88,8 +88,9 @@ auto vectorAdd = [](auto name) {
 				)
 			);
 		}
-		for (auto &thread : threads) {
-			thread.join();
+		for (auto thread : threads) {
+			thread->join();
+			delete thread;
 		}
 		return arrayOut;
 	};
@@ -144,13 +145,13 @@ auto matrixMultiplication = [](auto name) {
 	map<string, function<unique_ptr<float[]>(float* &, float* &, int)>> methods;
 	methods["classic"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		auto dimension = (int)sqrt(arrayLength);
-		#pragma loop(no_vector)	
-		for (int row = 0; row < dimension; row++) {
-			for (int column = 0; column < dimension; column++) {
-				arrayOut[dimension * row + column] = 0;
-				for (int z = 0; z < dimension; z++) {
-					arrayOut[dimension * row + column] += array1[dimension * row + z] * array2[dimension * row + column];
+		auto width = (int)sqrt(arrayLength);
+#pragma loop(no_vector)	
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
 				}
 			}
 		}
@@ -158,15 +159,15 @@ auto matrixMultiplication = [](auto name) {
 	};
 	methods["autoparallel"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		auto dimension = (int)sqrt(arrayLength);
-		#pragma loop(ivdep)
-		#pragma loop(hint_parallel(4))
-		#pragma loop(no_vector)	
-		for (int row = 0; row < dimension; row++) {
-			for (int column = 0; column < dimension; column++) {
-				arrayOut[dimension * row + column] = 0;
-				for (int z = 0; z < dimension; z++) {
-					arrayOut[dimension * row + column] += array1[dimension * row + z] * array2[dimension * row + column];
+		auto width = (int)sqrt(arrayLength);
+#pragma loop(ivdep)
+#pragma loop(hint_parallel(4))
+#pragma loop(no_vector)	
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
 				}
 			}
 		}
@@ -174,12 +175,12 @@ auto matrixMultiplication = [](auto name) {
 	};
 	methods["autovector"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		auto dimension = (int)sqrt(arrayLength);
-		for (int row = 0; row < dimension; row++) {
-			for (int column = 0; column < dimension; column++) {
-				arrayOut[dimension * row + column] = 0;
-				for (int z = 0; z < dimension; z++) {
-					arrayOut[dimension * row + column] += array1[dimension * row + z] * array2[dimension * row + column];
+		auto width = (int)sqrt(arrayLength);
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
 				}
 			}
 		}
@@ -187,13 +188,13 @@ auto matrixMultiplication = [](auto name) {
 	};
 	methods["openmp"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		auto dimension = (int)sqrt(arrayLength);
-		#pragma omp parallel for
-		for (int row = 0; row < dimension; row++) {
-			for (int column = 0; column < dimension; column++) {
-				arrayOut[dimension * row + column] = 0;
-				for (int z = 0; z < dimension; z++) {
-					arrayOut[dimension * row + column] += array1[dimension * row + z] * array2[dimension * row + column];
+		auto width = (int)sqrt(arrayLength);
+#pragma omp parallel for
+		for (int x = 0; x < width; x++) {
+			for (int y = 0; y < width; y++) {
+				arrayOut[width * x + y] = 0;
+				for (int z = 0; z < width; z++) {
+					arrayOut[width * x + y] += array1[width * x + z] * array2[width * z + y];
 				}
 			}
 		}
@@ -201,13 +202,13 @@ auto matrixMultiplication = [](auto name) {
 	};
 	methods["threads"] = [](auto &array1, auto &array2, auto arrayLength) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
-		auto dimension = (int)sqrt(arrayLength), numberOfThreads = 2;
+		auto dimension = (int)sqrt(arrayLength), numberOfThreads = 4;
 		auto mul = [](auto* array1, auto* array2, auto size, auto row, auto col, auto* array3) {
 			for (auto i = 0; i < size; ++i) {
 				array3[row * size + col] += array1[row * size + i] * array2[i * size + col];
 			}
 		};
-		vector<thread> threads;
+		vector<thread> threads(numberOfThreads);
 		for (auto i = 0; i < numberOfThreads; ++i)
 			threads[i] = thread([&, i]() {
 			for (auto row = i; row < dimension; row += numberOfThreads) {
@@ -233,7 +234,7 @@ auto matrixMultiplication = [](auto name) {
 		cl::Program::Sources sources;
 
 		string kernel_code =
-			"   __kernel void simple_mul(__global const float* A, __global const float* B, __global float* C, const int M){		"
+			"   __kernel void simple_add(__global const float* A, __global const float* B, __global float* C, const int M){		"
 			"		const int column  = get_global_id(0);													"
 			"		const int row  = get_global_id(1);														"
 			"		for (int k = 0; k < M; k++) {															"
@@ -258,7 +259,7 @@ auto matrixMultiplication = [](auto name) {
 		queue.enqueueWriteBuffer(buffer_A, CL_TRUE, 0, sizeof(float) * arrayLength, array1);
 		queue.enqueueWriteBuffer(buffer_B, CL_TRUE, 0, sizeof(float) * arrayLength, array2);
 
-		cl::Kernel kernel_add = cl::Kernel(program, "simple_mul");
+		cl::Kernel kernel_add = cl::Kernel(program, "simple_add");
 		kernel_add.setArg(0, buffer_A);
 		kernel_add.setArg(1, buffer_B);
 		kernel_add.setArg(2, buffer_C);
@@ -269,12 +270,11 @@ auto matrixMultiplication = [](auto name) {
 		unique_ptr<float[]> arrayOut(new float[arrayLength]);
 		queue.enqueueReadBuffer(buffer_C, CL_TRUE, 0, sizeof(float) * arrayLength, arrayOut.get());
 		return arrayOut;
-		return arrayOut;
 	};
 	return methods[name];
 };
 
-auto detectGPU = [] () {
+auto detectGPU = []() {
 	vector<cl::Platform> all_platforms;
 	cl::Platform::get(&all_platforms);
 	if (all_platforms.size() == 0) {
@@ -291,7 +291,7 @@ auto detectGPU = [] () {
 	cout << "Using openCL with GPU: " << all_devices[0].getInfo<CL_DEVICE_NAME>() << endl;
 };
 
-auto detectCPU = [] (auto print) {
+auto detectCPU = [](auto print) {
 	LARGE_INTEGER lpFrequency;
 	SYSTEM_INFO siSysInfo;
 	try {
@@ -308,7 +308,6 @@ auto detectCPU = [] (auto print) {
 
 auto initializeRandomArray = [](auto arrayLength, auto maxRandomValue) {
 	auto array = new float[arrayLength];
-	#pragma omp parallel for
 	for (auto i = 0; i < arrayLength; i++) {
 		array[i] = rand() % maxRandomValue + 1;
 	}
@@ -320,7 +319,7 @@ auto calculateTime = [](auto name, auto &sumFunction, auto &input1, auto &input2
 	auto output = sumFunction(input1, input2, arrayLength);
 	auto end = steady_clock::now();
 	if (debug) {
-		cout << "array 1: " << input1[1] << " and array 2: " << input2[1] << " output: " << output[1] << endl;
+		cout << input1[1] << " + " << input2[1] << " = " << output[1] << endl;
 	}
 	return duration_cast<nanoseconds>(end - begin).count();
 };
@@ -381,11 +380,11 @@ int main() {
 	std::cout << "This will run two benchmarks for a total of +/- 10 minutes. Do not exit." << endl;
 
 	vector<int> lengths = { 16, 256, 1'024, 16'384, 262'144, 1'048'576, 4'194'304, 16'777'216, 134'217'728 };
-	vector<string> methods = { "classic", "autoparallel", "autovector", "openmp", "simd", "threads", "openCL" };
-	//benchmark(lengths, methods, vectorAdd, "vector.json");
+	vector<string> methods = { "classic", "autovector", "simd", "autoparallel", "openmp", "threads", "openCL" };
+	benchmark(lengths, methods, vectorAdd, "vector.json");
 
 	lengths = { 16, 256, 1'024, 16'384, 262'144, 1'048'576, 4'194'304 };
-	methods = { "classic", "autoparallel", "autovector", "openmp", "openCL" };
+	methods = { "classic", "autovector", "autoparallel", "openmp", "threads", "openCL" };
 	benchmark(lengths, methods, matrixMultiplication, "matrix.json");
 
 	std::cout << "Program ended and data saved. You can safely exit the program by pressing enter." << endl;
@@ -393,4 +392,3 @@ int main() {
 
 	return 0;
 }
-
